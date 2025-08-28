@@ -1,6 +1,40 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader, WeightedRandomSampler
+
+class BaseNet(nn.Module):
+    """
+    This class is copied from Annotatability.models, and can be
+    found at 'https://github.com/nitzanlab/Annotatability/blob/main/Annotatability/models.py'.
+    """
+    def __init__(self, layer_sizes):
+        """
+        Initializes a feedforward neural network with variable number of fully-connected layers.
+
+        Args:
+            layer_sizes (list of int): Sizes of each layer including input and output layers.
+        """
+        super(BaseNet, self).__init__()
+        layers = []
+        for i in range(len(layer_sizes) - 1):
+            layers.append(nn.Linear(layer_sizes[i], layer_sizes[i+1]))
+        self.layers = nn.ModuleList(layers)
+
+    def forward(self, x):
+        """
+        Performs the forward pass of the neural network.
+
+        Args:
+            x (torch.Tensor): Input data of shape (batch_size, input_size).
+
+        Returns:
+            torch.Tensor: Output data of shape (batch_size, output_size).
+        """
+        for layer in self.layers[:-1]:
+            x = F.relu(layer(x))
+        x = self.layers[-1](x)
+        return F.log_softmax(x, dim=1)
 
 def get_dataloader(X, y_onehot, weighted_sampler=False, device=None, batch_size=256):
     """
@@ -112,11 +146,14 @@ def pretrain_and_get_confidence(model, X, y, device=None, optimizer_fn=torch.opt
     confidence_sum = torch.zeros(n_samples, device=device)
     
     probs_sum = torch.zeros((n_samples,), device=device)
+    train_losses = []
     for epoch in range(epochs):
         avg_loss = train_one_epoch(model, dataloader, optimizer, criterion, device)
         probs = evaluate_model(model, X, y_onehot, device, batch_size=batch_size)
+
+        train_losses.append(avg_loss)
         probs_sum = probs_sum + probs
     
     # Average over epochs
-    confidences = probs_sum / epochs
-    return confidences
+    confidence = probs_sum / epochs
+    return confidence, train_losses
