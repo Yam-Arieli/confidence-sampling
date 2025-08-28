@@ -58,7 +58,7 @@ def evaluate_model(model, X, y_onehot, device, batch_size=256):
     dataset = TensorDataset(X, y_onehot, indices)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
-    all_probs = torch.zeros(len(X))
+    all_probs = torch.zeros(len(X), dtype=X.dtype, device=device)
     model.eval()
     with torch.no_grad():
         for X_batch, y_onehot_batch, idx_batch in dataloader:
@@ -71,8 +71,8 @@ def evaluate_model(model, X, y_onehot, device, batch_size=256):
     
     return all_probs
 
-def pretrain_and_get_confidence(model, X, y, sampler, optimizer_fn=torch.optim.SGD, criterion=torch.nn.CrossEntropyLoss(),
-                                weighted_sampler=True, batch_size=256, epochs=100, lr=1e-4, momentum=0.9, device=None):
+def pretrain_and_get_confidence(model, X, y, device=None, optimizer_fn=torch.optim.SGD, criterion=torch.nn.CrossEntropyLoss(),
+                                weighted_sampler=True, batch_size=256, epochs=100, lr=1e-4, momentum=0.9):
     """
     Train the given model on data X, y with per-example confidence tracking.
     
@@ -92,8 +92,8 @@ def pretrain_and_get_confidence(model, X, y, sampler, optimizer_fn=torch.optim.S
         confidences: tensor of shape [n_samples], average confidence per sample
     """
     model = model.to(device)
-    X = X.to(device)
-    y = y.to(device)
+    X = torch.tensor(X).to(device)
+    y = torch.tensor(y).to(device)
     
     n_samples = X.shape[0]
     n_classes = int(y.max().item() + 1)
