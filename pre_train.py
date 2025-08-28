@@ -1,8 +1,78 @@
 import torch
 import torch.nn.functional as F
+from torch.utils.data import TensorDataset, DataLoader, WeightedRandomSampler
 
-def train_and_get_confidence(model, X, y, sampler, optimizer_fn=torch.optim.SGD, criterion=torch.nn.CrossEntropyLoss(),
-                             epochs=100, lr=1e-4, momentum=0.9, device=None):
+def get_dataloader(X, y_onehot, weighted_sampler=False, device=None, batch_size=256):
+    """
+    Create a DataLoader for X and one-hot encoded y.
+    
+    Args:
+        X: tensor of shape [n_samples, n_features]
+        y_onehot: tensor of shape [n_samples, n_classes] (one-hot)
+        use_weighted_sampler: if True, use WeightedRandomSampler with inverse class frequency
+        device: torch device, e.g., 'cuda' or 'cpu'
+        batch_size: int, batch size for DataLoader
+
+    Returns:
+        DataLoader object
+    """
+    X = X.to(device)
+    y_onehot = y_onehot.to(device)
+    
+    dataset = TensorDataset(X, y_onehot)
+    
+    if weighted_sampler:
+        # Compute weights = 1 / class frequency
+        class_counts = y_onehot.sum(dim=0)
+        class_weights = 1.0 / class_counts
+        sample_weights = (y_onehot * class_weights).sum(dim=1)
+        sampler = WeightedRandomSampler(weights=sample_weights,
+                                        num_samples=len(sample_weights),
+                                        replacement=True)
+        dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
+    else:
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    
+    return dataloader
+
+def train_one_epoch(model, dataloader, optimizer, criterion, device):
+    model.train()
+    total_loss = 0.0
+    for X_batch, y_onehot_batch in dataloader:
+        X_batch = X_batch.to(device)
+        y_onehot_batch = y_onehot_batch.to(device)
+        
+        optimizer.zero_grad()
+        output = model(X_batch)  # log_softmax output
+        loss = criterion(output, y_onehot_batch)
+        loss.mean().backward()  # aggregate batch loss
+        optimizer.step()
+        
+        total_loss += loss.sum().item()
+    
+    avg_loss = total_loss / len(dataloader.dataset)
+    return avg_loss
+
+def evaluate_model(model, X, y_onehot, device, batch_size=256):
+    indices = torch.arange(len(X))
+    dataset = TensorDataset(X, y_onehot, indices)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+
+    all_probs = torch.zeros(len(X))
+    model.eval()
+    with torch.no_grad():
+        for X_batch, y_onehot_batch, idx_batch in dataloader:
+            X_batch = X_batch.to(device)
+            y_onehot_batch = y_onehot_batch.to(device)
+            output = model(X_batch)
+            probs = output.exp()
+            right_probs = (probs * y_onehot_batch).sum(dim=1)
+            all_probs[idx_batch] = right_probs.cpu()
+    
+    return all_probs
+
+def pretrain_and_get_confidence(model, X, y, sampler, optimizer_fn=torch.optim.SGD, criterion=torch.nn.CrossEntropyLoss(),
+                                weighted_sampler=True, batch_size=256, epochs=100, lr=1e-4, momentum=0.9, device=None):
     """
     Train the given model on data X, y with per-example confidence tracking.
     
@@ -30,6 +100,10 @@ def train_and_get_confidence(model, X, y, sampler, optimizer_fn=torch.optim.SGD,
     
     # One-hot encoding
     y_onehot = F.one_hot(y, num_classes=n_classes).float()
+
+    # DataLoader
+    dataloader = get_dataloader(X, y_onehot, weighted_sampler=weighted_sampler,
+                                device=device, batch_size=batch_size)
     
     # Optimizer
     optimizer = optimizer_fn(model.parameters(), lr=lr, momentum=momentum)
@@ -37,31 +111,12 @@ def train_and_get_confidence(model, X, y, sampler, optimizer_fn=torch.optim.SGD,
     # Track confidence sum per example
     confidence_sum = torch.zeros(n_samples, device=device)
     
+    probs_sum = torch.zeros((n_samples,), device=device)
     for epoch in range(epochs):
-        model.train()
-        for batch_idx in sampler(n_samples):
-            xb = X[batch_idx]
-            yb = y[batch_idx]
-            yb_onehot = y_onehot[batch_idx]
-            
-            optimizer.zero_grad()
-            output = model(xb)  # log_softmax output
-            loss = criterion(output, yb)
-            loss.mean().backward()  # aggregate batch loss
-            optimizer.step()
-            
-            # Calculate probabilities
-            probs = output.exp()  # log_softmax → probabilities
-            
-            # Confidence per sample = probability of true label
-            batch_conf = (probs * yb_onehot).sum(dim=1)
-            
-            # Add to running sum
-            confidence_sum[batch_idx] += batch_conf
-        
-        # Optional: print epoch progress
-        # print(f"Epoch {epoch+1}/{epochs} done.")
+        avg_loss = train_one_epoch(model, dataloader, optimizer, criterion, device)
+        probs = evaluate_model(model, X, y_onehot, device, batch_size=batch_size)
+        probs_sum = probs_sum + probs
     
     # Average over epochs
-    confidences = confidence_sum / epochs
+    confidences = probs_sum / epochs
     return confidences
