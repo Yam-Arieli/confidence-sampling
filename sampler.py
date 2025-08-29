@@ -44,8 +44,46 @@ def compute_k(M, N, pi, k0=1.0, epsilon=1e-6):
     k = max(k, 1.0)                # enforce a minimal steepness
     return k
 
+import numpy as np
+
 def weighted_sample_from_confidence(confidence, sample_size, c0, k0=1.0, pi=0.2, epsilon=1e-6):
-    k = compute_k(len(confidence), sample_size, pi=pi, k0=k0, epsilon=epsilon)
+    """
+    Sample indices from confidence values using a logistic weighting scheme.
+
+    Parameters
+    ----------
+    confidence : np.ndarray
+        Array of confidence scores in [0,1].
+    sample_size : int
+        Number of samples to draw.
+    c0 : float
+        Midpoint of logistic curve.
+    k0 : float, optional
+        Base steepness parameter.
+    pi : float, optional
+        Prior fraction of generalizable cells.
+    epsilon : float, optional
+        Stability constant to avoid division by zero.
+
+    Returns
+    -------
+    sample_indices : np.ndarray
+        Indices of the sampled elements.
+    """
+    trainset_size = len(confidence)
+    k = compute_k(sample_size, trainset_size, pi=pi, k0=k0, epsilon=epsilon)
     weights = numerator_logistic_curve(confidence, k, c0)
-    
-    return sampler
+    weights = np.clip(weights, epsilon, None)  # avoid exact 0
+
+    # normalize weights into probabilities
+    probs = weights / (weights.sum())
+
+    # sample indices according to probs
+    sample_indices = np.random.choice(
+        np.arange(trainset_size),
+        size=sample_size,
+        replace=sample_size > trainset_size,
+        p=probs
+    )
+
+    return sample_indices
