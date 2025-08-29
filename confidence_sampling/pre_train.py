@@ -88,7 +88,7 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device):
     return avg_loss
 
 def evaluate_model(model, X, y_onehot, device, batch_size=256):
-    indices = torch.arange(len(X))
+    indices = torch.arange(len(X)).to(device)
     dataset = TensorDataset(X, y_onehot, indices)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
@@ -101,7 +101,7 @@ def evaluate_model(model, X, y_onehot, device, batch_size=256):
             output = model(X_batch)
             probs = output.exp()
             right_probs = (probs * y_onehot_batch).sum(dim=1)
-            all_probs[idx_batch] = right_probs.cpu()
+            all_probs[idx_batch] = right_probs
     
     return all_probs
 
@@ -134,7 +134,6 @@ def pretrain_and_get_confidence(model, X, y, device=None, optimizer_fn=torch.opt
     
     # One-hot encoding
     y_onehot = F.one_hot(y, num_classes=n_classes).float()
-    y_onehot = y_onehot.to(device)
 
     # DataLoader
     dataloader = get_dataloader(X, y_onehot, weighted_sampler=weighted_sampler,
@@ -142,9 +141,6 @@ def pretrain_and_get_confidence(model, X, y, device=None, optimizer_fn=torch.opt
     
     # Optimizer
     optimizer = optimizer_fn(model.parameters(), lr=lr, momentum=momentum)
-    
-    # Track confidence sum per example
-    confidence_sum = torch.zeros(n_samples, device=device)
     
     probs_sum = torch.zeros((n_samples,), device=device)
     train_losses = []
