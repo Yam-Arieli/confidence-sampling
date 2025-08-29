@@ -134,6 +134,7 @@ def pretrain_and_get_confidence(model, X, y, device=None, optimizer_fn=torch.opt
     
     # One-hot encoding
     y_onehot = F.one_hot(y, num_classes=n_classes).float()
+    y_onehot = y_onehot.to(device)
 
     # DataLoader
     dataloader = get_dataloader(X, y_onehot, weighted_sampler=weighted_sampler,
@@ -153,6 +154,8 @@ def pretrain_and_get_confidence(model, X, y, device=None, optimizer_fn=torch.opt
 
         train_losses.append(avg_loss)
         probs_sum = probs_sum + probs
+
+        print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
     
     # Average over epochs
     confidence = probs_sum / epochs
