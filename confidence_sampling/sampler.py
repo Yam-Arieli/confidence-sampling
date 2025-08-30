@@ -87,3 +87,107 @@ def weighted_sample_from_confidence(confidence, sample_size, c0, k0=1.0, pi=0.2,
     )
 
     return sample_indices
+
+def compute_class_sample_sizes(y, M, min_per_class=1):
+    """
+    Compute sample sizes per class, proportional to their frequency in `y`,
+    while enforcing a minimum per-class sample size.
+
+    Parameters
+    ----------
+    y : np.ndarray
+        Array of class IDs (integers from 0..n_classes-1).
+    M : int
+        Total number of samples to draw.
+    min_per_class : int, optional (default=1)
+        Minimum number of samples to allocate per class.
+
+    Returns
+    -------
+    sizes : np.ndarray
+        Array of length n_classes with number of samples to draw from each class.
+        Sums to exactly M.
+    """
+    classes, counts = np.unique(y, return_counts=True)
+    n_classes = len(classes)
+
+    if M < n_classes * min_per_class:
+        raise ValueError(
+            f"Cannot allocate {M} samples with at least {min_per_class} per class "
+            f"(need at least {n_classes * min_per_class})."
+        )
+
+    # Step 1: assign the minimum per class
+    sizes = np.full(n_classes, min_per_class, dtype=int)
+    remaining = M - sizes.sum()
+
+    # Step 2: distribute remaining proportionally
+    freqs = counts / counts.sum()
+    extra_sizes = np.floor(freqs * remaining).astype(int)
+
+    sizes += extra_sizes
+    remaining = M - sizes.sum()
+
+    # Step 3: distribute any leftover (due to rounding) to the largest fractional parts
+    fractions = (freqs * remaining + 1e-9)  # avoid ties with small noise
+    top_classes = np.argsort(-fractions)[:remaining]
+    sizes[top_classes] += 1
+
+    return sizes
+
+
+def stratified_random_sample(y, M):
+    """
+    Stratified random sample of size M.
+
+    Parameters
+    ----------
+    y : np.ndarray
+        Array of class ids.
+    M : int
+        Total number of samples to draw.
+
+    Returns
+    -------
+    indices : np.ndarray
+        Indices of sampled observations.
+    """
+    sizes = compute_class_sample_sizes(y, M)
+    indices = []
+    for c, m in enumerate(sizes):
+        class_indices = np.where(y == c)[0]
+        if m > 0:
+            sampled = np.random.choice(class_indices, size=m, replace=(m > len(class_indices)))
+            indices.append(sampled)
+    return np.concatenate(indices)
+
+
+def stratified_weighted_sample(y, confidence, M, c0, k0=1.0, pi=0.2, epsilon=1e-6):
+    """
+    Stratified weighted sampling from each class using confidence scores.
+
+    Parameters
+    ----------
+    y : np.ndarray
+        Array of class ids.
+    confidence : np.ndarray
+        Confidence values aligned with y.
+    M : int
+        Total number of samples.
+    c0, k0, pi, epsilon : params for weighted_sample_from_confidence
+
+    Returns
+    -------
+    indices : np.ndarray
+        Indices of sampled observations.
+    """
+    sizes = compute_class_sample_sizes(y, M)
+    indices = []
+    for c, m in enumerate(sizes):
+        if m == 0:
+            continue
+        class_indices = np.where(y == c)[0]
+        class_conf = confidence[class_indices]
+        sampled_rel = weighted_sample_from_confidence(class_conf, m, c0, k0, pi, epsilon)
+        indices.append(class_indices[sampled_rel])
+    return np.concatenate(indices)
