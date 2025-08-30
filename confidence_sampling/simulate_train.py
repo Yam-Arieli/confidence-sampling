@@ -60,22 +60,22 @@ class ComplexNet(nn.Module):
 
 from sklearn.metrics import accuracy_score, recall_score, f1_score
 
-def eval_result(test_probs, y_test, do_print=False):
+def eval_result(test_probs, y_test_labels, do_print=False):
     # Get predicted class for each test sample
     test_pred = test_probs.argmax(dim=1).cpu().numpy()
 
     # Overall accuracy
-    acc = accuracy_score(y_test, test_pred)
+    acc = accuracy_score(y_test_labels, test_pred)
 
     # Recall per class
-    recall = recall_score(y_test, test_pred, average=None)
+    recall = recall_score(y_test_labels, test_pred, average=None)
 
     # F1 per class
-    f1_per_class = f1_score(y_test, test_pred, average=None)
+    f1_per_class = f1_score(y_test_labels, test_pred, average=None)
     # Macro F1 (treats all classes equally)
-    f1_macro = f1_score(y_test, test_pred, average='macro')
+    f1_macro = f1_score(y_test_labels, test_pred, average='macro')
     # Weighted F1 (accounts for class imbalance)
-    f1_weighted = f1_score(y_test, test_pred, average='weighted')
+    f1_weighted = f1_score(y_test_labels, test_pred, average='weighted')
 
     if do_print:
         print(f"Accuracy: {acc:.4f}")
@@ -86,7 +86,9 @@ def eval_result(test_probs, y_test, do_print=False):
 
     return acc, recall, f1_per_class, f1_macro, f1_weighted
 
-def do_train(X_tensor, y_tensor, X_test_tensor, y_test_tensor, num_classes, device, epochs=100, batch_size=16, lr=1e-4, model=None, do_print=False):
+def do_train(X_tensor, y_tensor, num_classes,
+             X_test_tensor, y_test_tensor, y_test_labels,
+             device, epochs=100, batch_size=16, lr=1e-4, model=None, do_print=False):
     input_dim = X_tensor.shape[1]
     hidden_dim = 1024
     if not model:
@@ -108,7 +110,7 @@ def do_train(X_tensor, y_tensor, X_test_tensor, y_test_tensor, num_classes, devi
         with torch.no_grad():
             test_probs = torch.softmax(model(X_test_tensor), dim=1)
         
-        acc_test, recall_test, f1_per_class, f1_macro, f1_weighted = eval_result(test_probs, y_test_tensor, do_print=False)
+        acc_test, recall_test, f1_per_class, f1_macro, f1_weighted = eval_result(test_probs, y_test_labels, do_print=False)
         test_metrics.append([acc_test, recall_test, f1_per_class, f1_macro, f1_weighted])
         
         if do_print and ((epoch+1) % 10 == 0 or epoch == 0):
@@ -126,7 +128,10 @@ def simulate_train(adata_train, adata_test, device, epochs=80, batch_size=16, lr
     adata_temp = adata_train.copy()
     X_tensor, y_tensor, num_classes = prepare_train_tensors(adata_temp, device)
     X_test_tensor, y_test_tensor, num_classes_test = prepare_train_tensors(adata_test, device)
-    model, probs, losses, test_metrics = do_train(X_tensor, y_tensor, num_classes, X_test_tensor, y_test_tensor, device, epochs=epochs,
-                                    batch_size=batch_size, lr=lr, do_print=True)
+    y_test_labels = adata_test.obs["y"].astype("category").cat.codes.values
+    model, probs, losses, test_metrics = do_train(X_tensor, y_tensor, num_classes,
+                                                  X_test_tensor, y_test_tensor, y_test_labels,
+                                                  device, epochs=epochs,
+                                                  batch_size=batch_size, lr=lr, do_print=True)
 
     return model, probs, losses, test_metrics
