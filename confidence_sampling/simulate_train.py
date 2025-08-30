@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from utils import prepare_train_tensors
+from confidence_sampling.utils import prepare_train_tensors
 
 def train_one_epoch(model, optimizer, criterion, X_tensor, y_tensor, batch_size=16):
     model.train()
@@ -24,20 +24,6 @@ def train_one_epoch(model, optimizer, criterion, X_tensor, y_tensor, batch_size=
         optimizer.step()
         epoch_losses.append(loss.item())
     return epoch_losses
-
-# def predict_test(adata_test, model, device):
-#     model.eval()
-#     # Prepare adata_test input
-#     X_test = adata_test.X.toarray() if hasattr(adata_test.X, "toarray") else adata_test.X
-#     # Normalize each row of X_test to have zero mean and unit variance (row-wise), same as for sampled data
-#     X_test = (X_test - np.nanmean(X_test, axis=1, keepdims=True)) / (np.nanstd(X_test, axis=1, keepdims=True) + 1e-8)
-#     X_test_tensor = torch.tensor(X_test, dtype=torch.float32, device=device)
-
-#     # Predict probabilities for adata_test
-#     with torch.no_grad():
-#         test_probs = torch.softmax(model(X_test_tensor), dim=1)
-    
-#     return test_probs
 
 class ComplexNet(nn.Module):
     def __init__(self, input_dim, hidden_dim, output_dim, droupout_p=0.1):
