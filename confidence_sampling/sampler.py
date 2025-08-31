@@ -46,7 +46,7 @@ def compute_k(M, N, pi, k0=1.0, epsilon=1e-6):
 
 import numpy as np
 
-def weighted_sample_from_confidence(confidence, sample_size, c0, k0=1.0, pi=0.2, epsilon=1e-6):
+def weighted_sample_from_confidence(confidence, sample_size, k=None, c0=0.5, k0=1.0, pi=0.2, epsilon=1e-6):
     """
     Sample indices from confidence values using a logistic weighting scheme.
 
@@ -71,24 +71,60 @@ def weighted_sample_from_confidence(confidence, sample_size, c0, k0=1.0, pi=0.2,
         Indices of the sampled elements.
     """
     trainset_size = len(confidence)
-    k = compute_k(sample_size, trainset_size, pi=pi, k0=k0, epsilon=epsilon)
+    if not k:
+        k = compute_k(sample_size, trainset_size, pi=pi, k0=k0, epsilon=epsilon)
     weights = numerator_logistic_curve(confidence, k, c0)
     weights = np.clip(weights, epsilon, None)  # avoid exact 0
 
     # normalize weights into probabilities
     probs = weights / (weights.sum())
+    probs = (weights - weights.min()) / (weights.max() - weights.min())
+    probs = np.power(probs, 0.5)
+    # probs_cumsum = np.cumulative_sum(probs)
+    # Quantile boundaries
+    quantiles = np.linspace(0, 1, sample_size + 1)
 
-    # sample indices according to probs
-    sample_indices = np.random.choice(
-        np.arange(trainset_size),
-        size=sample_size,
-        replace=sample_size > trainset_size,
-        p=probs
-    )
+    # Loop over quantile intervals
+    sample_indices = []
+    all_indices = np.arange(confidence.shape[0])
+    for i in range(sample_size):
+        q_min = np.quantile(probs, quantiles[i])
+        q_max = np.quantile(probs, quantiles[i+1])
+        print(f'{q_min=}, {q_max=}')
+
+        # Get the indices of cells within this quantile range
+        idxs = all_indices[(probs >= q_min) & (probs <= q_max)].copy()
+
+        if len(idxs) > 0:
+            # Sample one (or more) cell(s) from this bin
+            chosen = np.random.choice(idxs, size=1, replace=False)
+            sample_indices.append(int(chosen))
 
     return sample_indices
 
-def compute_class_sample_sizes(y, M, min_per_class=1):
+def sample_by_conf(confidence, sample_size, power=0.7):
+    sample_idxs = []
+    # Quantile boundaries
+    quantiles = np.linspace(0, 1, sample_size + 1)
+    quantiles = np.power(quantiles, power)
+    all_indices = np.arange(confidence.shape[0])
+
+    # Loop over quantile intervals
+    for i in range(sample_size):
+        q_min = np.quantile(confidence, quantiles[i])
+        q_max = np.quantile(confidence, quantiles[i+1])
+
+        # Get the indices of cells within this quantile range
+        idxs = all_indices[(confidence >= q_min) & (confidence <= q_max)].copy()
+
+        if len(idxs) > 0:
+            # Sample one (or more) cell(s) from this bin
+            chosen = np.random.choice(idxs, size=1, replace=False)
+            sample_idxs.extend(list(chosen))
+
+    return sample_idxs
+
+def compute_class_sample_sizes(y, M, min_per_class=5):
     """
     Compute sample sizes per class, proportional to their frequency in `y`,
     while enforcing a minimum per-class sample size.
@@ -162,7 +198,7 @@ def stratified_random_sample(y, M):
     return np.concatenate(indices)
 
 
-def stratified_weighted_sample(y, confidence, M, c0, k0=1.0, pi=0.2, epsilon=1e-6):
+def stratified_weighted_sample(y, confidence, M, sample_func=sample_by_conf, **kwargs_sample_func):
     """
     Stratified weighted sampling from each class using confidence scores.
 
@@ -188,6 +224,6 @@ def stratified_weighted_sample(y, confidence, M, c0, k0=1.0, pi=0.2, epsilon=1e-
             continue
         class_indices = np.where(y == c)[0]
         class_conf = confidence[class_indices]
-        sampled_rel = weighted_sample_from_confidence(class_conf, m, c0, k0, pi, epsilon)
-        indices.append(class_indices[sampled_rel])
+        sample_idxs = sample_func(class_conf, m, **kwargs_sample_func)
+        indices.append(class_indices[sample_idxs])
     return np.concatenate(indices)
