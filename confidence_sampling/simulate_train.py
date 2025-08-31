@@ -87,17 +87,15 @@ def eval_result(test_probs, y_test_labels, do_print=False):
     return acc, recall, f1_per_class, f1_macro, f1_weighted
 
 def do_train(X_tensor, y_tensor, num_classes,
-             X_test_tensor, y_test_tensor, y_test_labels,
-             device, epochs=100, batch_size=16, lr=1e-4, model=None, do_print=False):
+             X_test_tensor, y_test_labels, device,
+             hidden_dim=1024, epochs=100, batch_size=16, lr=1e-4, droupout_p=0.1, model=None, do_print=False):
     input_dim = X_tensor.shape[1]
-    hidden_dim = 1024
+    
     if not model:
-        model = ComplexNet(input_dim, hidden_dim, num_classes, droupout_p=0.3).to(device)
+        model = ComplexNet(input_dim, hidden_dim, num_classes, droupout_p=droupout_p).to(device)
 
     # optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=lr/10)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    # optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
-    # optimizer = torch.optim.SGD(model.parameters(), lr=lr)
     criterion = nn.CrossEntropyLoss()
 
     losses = []
@@ -124,14 +122,14 @@ def do_train(X_tensor, y_tensor, num_classes,
     
     return model, probs, np.array(losses), test_metrics
 
-def simulate_train(adata_train, adata_test, device, epochs=80, batch_size=16, lr=1e-4):
+def simulate_train(adata_train, adata_test, device, epochs=80, batch_size=16, lr=1e-4, hidden_dim=1024, droupout_p=0.1):
     adata_temp = adata_train.copy()
     X_tensor, y_tensor, num_classes = prepare_train_tensors(adata_temp, device)
     X_test_tensor, y_test_tensor, num_classes_test = prepare_train_tensors(adata_test, device)
     y_test_labels = adata_test.obs["y"].astype("category").cat.codes.values
     model, probs, losses, test_metrics = do_train(X_tensor, y_tensor, num_classes,
-                                                  X_test_tensor, y_test_tensor, y_test_labels,
-                                                  device, epochs=epochs,
-                                                  batch_size=batch_size, lr=lr, do_print=True)
+                                                  X_test_tensor, y_test_labels,
+                                                  device, hidden_dim=hidden_dim, epochs=epochs,
+                                                  batch_size=batch_size, lr=lr, droupout_p=droupout_p, do_print=True)
 
     return model, probs, losses, test_metrics
