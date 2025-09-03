@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader, WeightedRandomSampler
+import numpy as np
 
 class BaseNet(nn.Module):
     """
@@ -156,3 +157,91 @@ def pretrain_and_get_confidence(model, X, y, device=None, optimizer_fn=torch.opt
     # Average over epochs
     confidence = probs_sum / epochs
     return confidence, train_losses
+
+##################################################################################
+
+def compute_forgetting_events(correctness_matrix):
+    """
+    Compute forgetting events from a boolean correctness matrix.
+
+    Parameters
+    ----------
+    correctness_matrix : torch.Tensor of shape (epochs, n_samples)
+        correctness_matrix[e, i] = True if sample i was correctly classified at epoch e
+
+    Returns
+    -------
+    forgetting_counts : np.ndarray of shape (n_samples,)
+        Number of forgetting events for each sample.
+    """
+    epochs, n_samples = correctness_matrix.shape
+    forgetting_counts = np.zeros(n_samples, dtype=int)
+
+    prev_correct = correctness_matrix[0].cpu().numpy()
+    for e in range(1, epochs):
+        curr_correct = correctness_matrix[e].cpu().numpy()
+        # count correct → incorrect transitions
+        forgetting_counts += ((prev_correct == 1) & (curr_correct == 0))
+        prev_correct = curr_correct
+
+    return forgetting_counts
+
+def pretrain_and_get_signals(model, X, y, device=None, optimizer_fn=torch.optim.SGD,
+                             criterion=torch.nn.CrossEntropyLoss(), weighted_sampler=True,
+                             batch_size=256, epochs=100, lr=1e-4, momentum=0.9):
+    """
+    Train the given model on data X, y and extract signals for sampling methods:
+    - average confidence per sample (for AFLite / least_confidence)
+    - full probabilities at final epoch (for margin / entropy)
+    - forgetting counts (for forgetting-based sampling)
+
+    Returns
+    -------
+    confidence : np.ndarray of shape (n_samples,)
+        Average confidence per sample across epochs.
+    final_probs : np.ndarray of shape (n_samples, n_classes)
+        Predicted class probabilities at the last epoch.
+    forgetting_counts : np.ndarray of shape (n_samples,)
+        Number of forgetting events per sample.
+    train_losses : list of floats
+        Average loss per epoch.
+    """
+    model = model.to(device)
+    X = torch.tensor(X).to(device)
+    y = torch.tensor(y).to(device)
+
+    n_samples = X.shape[0]
+    n_classes = int(y.max().item() + 1)
+
+    y_onehot = F.one_hot(y, num_classes=n_classes).float()
+
+    dataloader = get_dataloader(X, y_onehot, weighted_sampler=weighted_sampler,
+                                device=device, batch_size=batch_size)
+
+    optimizer = optimizer_fn(model.parameters(), lr=lr, momentum=momentum)
+
+    probs_sum = torch.zeros((n_samples,), device=device)
+    correctness_matrix = torch.zeros((epochs, n_samples), dtype=torch.bool, device=device)
+    train_losses = []
+
+    for epoch in range(epochs):
+        avg_loss = train_one_epoch(model, dataloader, optimizer, criterion, device)
+        probs = evaluate_model(model, X, y_onehot, device, batch_size=batch_size)  # shape (n_samples, n_classes)
+
+        # confidence of predicted class
+        conf_epoch, preds = probs.max(dim=1)
+        correct = preds.eq(y)
+        correctness_matrix[epoch] = correct
+
+        # accumulate confidence
+        probs_sum += conf_epoch
+
+        train_losses.append(avg_loss)
+        print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
+
+    # Average over epochs
+    confidence = (probs_sum / epochs).cpu().numpy()
+    final_probs = probs.detach().cpu().numpy()
+    forgetting_counts = compute_forgetting_events(correctness_matrix)
+
+    return confidence, final_probs, forgetting_counts, train_losses
