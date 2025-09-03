@@ -155,7 +155,7 @@ def pretrain_and_get_confidence(model, X, y, device=None, optimizer_fn=torch.opt
         print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
     
     # Average over epochs
-    confidence = probs_sum / epochs
+    confidence = (probs_sum / epochs).cpu().numpy()
     return confidence, train_losses
 
 ##################################################################################
@@ -186,25 +186,71 @@ def compute_forgetting_events(correctness_matrix):
 
     return forgetting_counts
 
-def pretrain_and_get_signals(model, X, y, device=None, optimizer_fn=torch.optim.SGD,
-                             criterion=torch.nn.CrossEntropyLoss(), weighted_sampler=True,
-                             batch_size=256, epochs=100, lr=1e-4, momentum=0.9):
-    """
-    Train the given model on data X, y and extract signals for sampling methods:
-    - average confidence per sample (for AFLite / least_confidence)
-    - full probabilities at final epoch (for margin / entropy)
-    - forgetting counts (for forgetting-based sampling)
+def evaluate_model_probs_n_classes_probs(model, X, y_onehot, device, batch_size=256):
+    indices = torch.arange(len(X)).to(device)
+    dataset = TensorDataset(X, y_onehot, indices)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
-    Returns
-    -------
-    confidence : np.ndarray of shape (n_samples,)
-        Average confidence per sample across epochs.
-    final_probs : np.ndarray of shape (n_samples, n_classes)
-        Predicted class probabilities at the last epoch.
-    forgetting_counts : np.ndarray of shape (n_samples,)
-        Number of forgetting events per sample.
-    train_losses : list of floats
-        Average loss per epoch.
+    all_classes_probs = torch.zeros((len(X), y_onehot.shape[1]), dtype=X.dtype, device=device)
+    all_probs = torch.zeros(len(X), dtype=X.dtype, device=device)
+    model.eval()
+    with torch.no_grad():
+        for X_batch, y_onehot_batch, idx_batch in dataloader:
+            X_batch = X_batch.to(device)
+            y_onehot_batch = y_onehot_batch.to(device)
+            output = model(X_batch)
+
+            probs = output.exp()
+            right_probs = (probs * y_onehot_batch).sum(dim=1)
+
+            all_classes_probs[idx_batch] = probs
+            all_probs[idx_batch] = right_probs
+    
+    return all_probs, all_classes_probs
+
+def pretrain_and_get_signals(
+    model,
+    X,
+    y,
+    device=None,
+    optimizer_fn=torch.optim.SGD,
+    criterion=torch.nn.CrossEntropyLoss(),
+    weighted_sampler=True,
+    batch_size=256,
+    epochs=100,
+    lr=1e-4,
+    momentum=0.9,
+):
+    """
+    Train a model on X, y while collecting signals for various sampling strategies.
+    
+    Signals collected:
+    1. Confidence: average of probabilities assigned to the correct label across all epochs.
+    2. Final predicted probabilities for all classes: used for uncertainty-based sampling (margin/entropy).
+    3. Forgetting counts: number of times a sample flips from correct → incorrect across epochs.
+    
+    Args:
+        model: PyTorch model. Last layer should output log-softmax.
+        X: input tensor of shape (n_samples, n_features)
+        y: label tensor of shape (n_samples,) (integer class indices)
+        device: 'cpu' or 'cuda'
+        optimizer_fn: optimizer class (e.g., torch.optim.SGD)
+        criterion: loss function (reduction='none' recommended if per-sample losses needed)
+        weighted_sampler: whether to use a weighted DataLoader sampler
+        batch_size: batch size for training and evaluation
+        epochs: number of epochs
+        lr: learning rate
+        momentum: momentum (if applicable)
+    
+    Returns:
+        confidence: np.ndarray, shape (n_samples,)
+            Average probability assigned to the correct label across all epochs.
+        final_probs: np.ndarray, shape (n_samples, n_classes)
+            Predicted class probabilities at the final epoch (used for uncertainty sampling).
+        afliteting_counts: np.ndarray, shape (n_samples,)
+            Number of afliteting events per sample.
+        train_losses: list of floats
+            Average training loss per epoch.
     """
     model = model.to(device)
     X = torch.tensor(X).to(device)
@@ -213,35 +259,52 @@ def pretrain_and_get_signals(model, X, y, device=None, optimizer_fn=torch.optim.
     n_samples = X.shape[0]
     n_classes = int(y.max().item() + 1)
 
+    # One-hot encoding of labels for computing probabilities
     y_onehot = F.one_hot(y, num_classes=n_classes).float()
 
-    dataloader = get_dataloader(X, y_onehot, weighted_sampler=weighted_sampler,
-                                device=device, batch_size=batch_size)
+    # Prepare DataLoader
+    dataloader = get_dataloader(
+        X, y_onehot, weighted_sampler=weighted_sampler, device=device, batch_size=batch_size
+    )
 
+    # Initialize optimizer
     optimizer = optimizer_fn(model.parameters(), lr=lr, momentum=momentum)
 
-    probs_sum = torch.zeros((n_samples,), device=device)
+    # Initialize storage for signals
+    # sum_probs will accumulate the probability of the correct label across epochs
+    sum_probs = torch.zeros(n_samples, dtype=X.dtype, device=device)
+    # correctness_matrix tracks whether each sample was predicted correctly at each epoch
     correctness_matrix = torch.zeros((epochs, n_samples), dtype=torch.bool, device=device)
     train_losses = []
 
     for epoch in range(epochs):
+        # Train one epoch
         avg_loss = train_one_epoch(model, dataloader, optimizer, criterion, device)
-        probs = evaluate_model(model, X, y_onehot, device, batch_size=batch_size)  # shape (n_samples, n_classes)
 
-        # confidence of predicted class
-        conf_epoch, preds = probs.max(dim=1)
+        # Evaluate model to get per-sample probabilities
+        # all_probs: probability of the true label for each sample
+        # all_classes_probs: full probability distribution for each sample
+        all_probs, all_classes_probs = evaluate_model_probs_n_classes_probs(model, X, y_onehot, device, batch_size=batch_size)
+
+        # Track correctness for forgetting events
+        # predicted class is argmax over class probabilities
+        _, preds = all_classes_probs.max(dim=1)
         correct = preds.eq(y)
         correctness_matrix[epoch] = correct
 
-        # accumulate confidence
-        probs_sum += conf_epoch
+        # Accumulate true-label probabilities for confidence
+        sum_probs += all_probs
 
         train_losses.append(avg_loss)
         print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
 
-    # Average over epochs
-    confidence = (probs_sum / epochs).cpu().numpy()
-    final_probs = probs.detach().cpu().numpy()
+    # Compute confidence as the average probability of the correct label over all epochs
+    confidence = (sum_probs / epochs).cpu().numpy()
+
+    # Final predicted probabilities for uncertainty-based sampling
+    final_probs = all_classes_probs.detach().cpu().numpy()
+
+    # Compute forgetting counts: number of correct → incorrect transitions per sample
     forgetting_counts = compute_forgetting_events(correctness_matrix)
 
     return confidence, final_probs, forgetting_counts, train_losses

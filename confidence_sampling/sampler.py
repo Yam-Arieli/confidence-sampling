@@ -144,13 +144,15 @@ def sample_by_forgetting(forgetting_counts, M):
     indices : np.ndarray
         Indices of selected samples.
     """
-    # Higher forgetting = higher probability
-    probs = forgetting_counts.astype(float)
-    if probs.sum() == 0:
-        probs = np.ones_like(probs)  # uniform if no forgetting events
+    # if all zeros, fallback to uniform
+    if forgetting_counts.sum() == 0:
+        probs = np.ones_like(forgetting_counts).astype(float)
+    else:
+        probs = forgetting_counts.astype(float)
     probs /= probs.sum()
-    return np.random.choice(len(forgetting_counts), size=M, replace=False, p=probs)
-
+    
+    replace = M > (forgetting_counts > 0).sum()  # True if not enough non-zero entries
+    return np.random.choice(len(forgetting_counts), size=M, replace=replace, p=probs)
 
 def sample_by_aflite(confidence, M, q=0.2):
     """
