@@ -75,11 +75,12 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device):
     total_loss = 0.0
     for X_batch, y_onehot_batch in dataloader:
         X_batch = X_batch.to(device)
-        y_onehot_batch = y_onehot_batch.to(device)
+        y = y_onehot_batch.argmax(dim=1)
+        y = y.to(device)
         
         optimizer.zero_grad()
         output = model(X_batch)  # log_softmax output
-        loss = criterion(output, y_onehot_batch)
+        loss = criterion(output, y)
         loss.mean().backward()  # aggregate batch loss
         optimizer.step()
         
@@ -114,7 +115,7 @@ def pretrain_and_get_confidence(model, X, y, device=None, optimizer_fn=torch.opt
     Args:
         model: PyTorch model (last layer must be log_softmax)
         optimizer_fn: optimizer class (e.g., torch.optim.SGD)
-        criterion: loss function (e.g., nn.NLLLoss(reduction='none'))
+        criterion: loss function (e.g., nn.CrossEntropyLoss(reduction='none'))
         sampler: a function or iterable returning batches of indices
         X: input data tensor, shape [n_samples, n_features]
         y: labels tensor, shape [n_samples] (int class indices)
