@@ -106,7 +106,7 @@ def evaluate_model(model, X, y_onehot, device, batch_size=256):
     
     return all_probs
 
-def pretrain_and_get_confidence(model, X, y, device=None, optimizer_fn=torch.optim.SGD, criterion=torch.nn.CrossEntropyLoss(),
+def pretrain_and_get_confidence(model, X, y, device=None, optimizer_fn=torch.optim.SGD, criterion=torch.nn.NLLLoss(),
                                 weighted_sampler=True, batch_size=256, epochs=100, lr=1e-4, momentum=0.9):
     """
     Train the given model on data X, y with per-example confidence tracking.
@@ -214,7 +214,7 @@ def pretrain_and_get_signals(
     y,
     device=None,
     optimizer_fn=torch.optim.SGD,
-    criterion=torch.nn.CrossEntropyLoss(),
+    criterion=torch.nn.NLLLoss(),
     weighted_sampler=True,
     batch_size=256,
     epochs=100,
