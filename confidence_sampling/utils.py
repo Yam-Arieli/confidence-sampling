@@ -59,3 +59,45 @@ def add_target_y_to_test(adata_train, adata_test, label_column):
     adata_test.obs['y'] = temp['y'].values
     adata_test = adata_test[~adata_test.obs['y'].isna().values, :]
     return adata_test
+
+def mislabel_trainset(adata_train, label_column, noise_prob: float):
+    # Extract the labels
+    labels = adata_train.obs[label_column].copy()
+
+    # Get class distribution (as probabilities)
+    class_probs = labels.value_counts(normalize=True)
+
+    # Generate a mask for which cells will be noised
+    mask = np.random.rand(len(labels)) < noise_prob
+
+    # For each "noised" index, sample a new label from the distribution
+    noisy_labels = labels.copy()
+    noisy_labels.loc[mask] = np.random.choice(
+        a=class_probs.index,  # possible labels
+        size=mask.sum(),    # number of samples
+        p=class_probs.values  # probability weights
+    )
+
+    # Assign back
+    adata_train.obs[label_column] = noisy_labels
+    return adata_train
+
+def add_noise_to_genes(adata_train, genes_std_noise: float)
+    # Ensure X is dense (not sparse)
+    X = adata_train.X
+    if not isinstance(X, np.ndarray):
+        X = X.toarray()
+
+    # Compute std per gene
+    gene_stds = X.std(axis=0)
+
+    # Generate noise with per-gene scaling
+    noise = np.random.normal(
+        loc=0,
+        scale=genes_std_noise * gene_stds,  # shape (n_genes,)
+        size=X.shape
+    )
+
+    # Add noise
+    adata_train.X = X + noise
+    return adata_train

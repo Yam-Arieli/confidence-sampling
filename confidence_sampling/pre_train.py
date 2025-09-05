@@ -37,6 +37,43 @@ class BaseNet(nn.Module):
         x = self.layers[-1](x)
         return F.log_softmax(x, dim=1)
 
+
+class LoRANet(nn.Module):
+    """
+    This class is copied from Annotatability.models, and can be
+    found at 'https://github.com/nitzanlab/Annotatability/blob/main/Annotatability/models.py'.
+    """
+    def __init__(self, layer_sizes):
+        """
+        Initializes a feedforward neural network with variable number of fully-connected layers.
+
+        Args:
+            layer_sizes (list of int): Sizes of each layer including input and output layers.
+        """
+        super(LoRANet, self).__init__()
+        layers = []
+        for i in range(len(layer_sizes) - 1):
+            bottle_neck = int(np.sqrt((layer_sizes[i] + layer_sizes[i+1])/2))
+            matA = nn.Linear(layer_sizes[i], bottle_neck)
+            matB = nn.Linear(bottle_neck, layer_sizes[i+1])
+            layers.append(nn.Sequential(matA, matB))
+        self.layers = nn.ModuleList(layers)
+
+    def forward(self, x):
+        """
+        Performs the forward pass of the neural network.
+
+        Args:
+            x (torch.Tensor): Input data of shape (batch_size, input_size).
+
+        Returns:
+            torch.Tensor: Output data of shape (batch_size, output_size).
+        """
+        for layer in self.layers[:-1]:
+            x = F.relu(layer(x))
+        x = self.layers[-1](x)
+        return F.log_softmax(x, dim=1)
+
 def get_dataloader(X, y_onehot, weighted_sampler=False, device=None, batch_size=256):
     """
     Create a DataLoader for X and one-hot encoded y.

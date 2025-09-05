@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from confidence_sampling.utils import prepare_train_tensors
+from sklearn.metrics import accuracy_score, recall_score, f1_score
 
 def train_one_epoch(model, optimizer, criterion, X_tensor, y_tensor, batch_size=16):
     model.train()
@@ -58,7 +59,39 @@ class ComplexNet(nn.Module):
 
         return self.fc_out(x)
 
-from sklearn.metrics import accuracy_score, recall_score, f1_score
+class ComplexNet2(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, droupout_p=0.1):
+        super().__init__()
+        self.fc1 = nn.Linear(input_dim, 32)
+        self.ln1 = nn.LayerNorm(32)
+
+        self.fc2 = nn.Linear(32, int(hidden_dim/4))
+        self.ln2 = nn.LayerNorm(int(hidden_dim/4))
+
+        self.fc3 = nn.Linear(int(hidden_dim/4), 16)
+        self.ln3 = nn.LayerNorm(16)
+
+        self.fc4 = nn.Linear(16, int(hidden_dim/8))
+        self.ln4 = nn.LayerNorm(int(hidden_dim/8))
+
+        self.dropout = nn.Dropout(droupout_p)
+        self.fc_out = nn.Linear(int(hidden_dim/8), output_dim)
+
+    def forward(self, x):
+        x = F.relu(self.ln1(self.fc1(x)))
+        x = self.dropout(x)
+
+        x = F.relu(self.ln2(self.fc2(x)))
+        x = self.dropout(x)
+
+        x = F.relu(self.ln3(self.fc3(x)))
+        x = self.dropout(x)
+
+        x = F.relu(self.ln4(self.fc4(x)))
+        x = self.dropout(x)
+
+        return self.fc_out(x)
+
 
 def eval_result(test_probs, y_test_labels, do_print=False):
     # Get predicted class for each test sample
@@ -92,10 +125,10 @@ def do_train(X_tensor, y_tensor, num_classes,
     input_dim = X_tensor.shape[1]
     
     if not model:
-        model = ComplexNet(input_dim, hidden_dim, num_classes, droupout_p=droupout_p).to(device)
+        model = ComplexNet2(input_dim, hidden_dim, num_classes, droupout_p=droupout_p).to(device)
 
     # optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=lr/10)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=lr/10)
     criterion = nn.CrossEntropyLoss()
 
     losses = []
