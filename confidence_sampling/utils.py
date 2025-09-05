@@ -82,7 +82,7 @@ def mislabel_trainset(adata_train, label_column, noise_prob: float):
     adata_train.obs[label_column] = noisy_labels
     return adata_train
 
-def add_noise_to_genes(adata_train, genes_std_noise: float)
+def add_noise_to_genes(adata_train, genes_std_noise: float):
     # Ensure X is dense (not sparse)
     X = adata_train.X
     if not isinstance(X, np.ndarray):
