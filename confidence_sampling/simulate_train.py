@@ -121,7 +121,9 @@ def eval_result(test_probs, y_test_labels, do_print=False):
 
 def do_train(X_tensor, y_tensor, num_classes,
              X_test_tensor, y_test_labels, device,
-             hidden_dim=1024, epochs=100, batch_size=16, lr=1e-4, droupout_p=0.1, model=None, do_print=False):
+             hidden_dim=1024, epochs=100, batch_size=16,
+             lr=1e-4, droupout_p=0.1, model=None, do_print=False,
+             eval_last_only=False):
     input_dim = X_tensor.shape[1]
     
     if not model:
@@ -141,6 +143,9 @@ def do_train(X_tensor, y_tensor, num_classes,
         with torch.no_grad():
             test_probs = torch.softmax(model(X_test_tensor), dim=1)
         
+        if eval_last_only and epoch < epochs - 1:
+            continue
+
         acc_test, recall_test, f1_per_class, f1_macro, f1_weighted = eval_result(test_probs, y_test_labels, do_print=False)
         test_metrics.append([acc_test, recall_test, f1_per_class, f1_macro, f1_weighted])
         
@@ -155,7 +160,9 @@ def do_train(X_tensor, y_tensor, num_classes,
     
     return model, probs, np.array(losses), test_metrics
 
-def simulate_train(adata_train, adata_test, device, epochs=80, batch_size=16, lr=1e-4, hidden_dim=1024, droupout_p=0.1):
+def simulate_train(adata_train, adata_test, device, epochs=80,
+                   batch_size=16, lr=1e-4, hidden_dim=1024, droupout_p=0.1,
+                   eval_last_only=False):
     adata_temp = adata_train.copy()
     X_tensor, y_tensor, num_classes = prepare_train_tensors(adata_temp, device)
     X_test_tensor, y_test_tensor, num_classes_test = prepare_train_tensors(adata_test, device)
@@ -163,6 +170,7 @@ def simulate_train(adata_train, adata_test, device, epochs=80, batch_size=16, lr
     model, probs, losses, test_metrics = do_train(X_tensor, y_tensor, num_classes,
                                                   X_test_tensor, y_test_labels,
                                                   device, hidden_dim=hidden_dim, epochs=epochs,
-                                                  batch_size=batch_size, lr=lr, droupout_p=droupout_p, do_print=True)
+                                                  batch_size=batch_size, lr=lr, droupout_p=droupout_p,
+                                                  do_print=True, eval_last_only=eval_last_only)
 
     return model, probs, losses, test_metrics
