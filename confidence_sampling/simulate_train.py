@@ -92,6 +92,26 @@ class ComplexNet2(nn.Module):
 
         return self.fc_out(x)
 
+class ComplexNet3(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, droupout_p=0.1):
+        super().__init__()
+        self.fc1 = nn.Linear(input_dim, 64)
+        self.ln1 = nn.LayerNorm(64)
+
+        self.fc2 = nn.Linear(64, 32)
+        self.ln2 = nn.LayerNorm(32)
+
+        self.dropout = nn.Dropout(droupout_p)
+        self.fc_out = nn.Linear(32, output_dim)
+
+    def forward(self, x):
+        x = F.relu(self.ln1(self.fc1(x)))
+        x = self.dropout(x)
+
+        x = F.relu(self.ln2(self.fc2(x)))
+        x = self.dropout(x)
+
+        return self.fc_out(x)
 
 def eval_result(test_probs, y_test_labels, do_print=False):
     # Get predicted class for each test sample
@@ -119,6 +139,21 @@ def eval_result(test_probs, y_test_labels, do_print=False):
 
     return acc, recall, f1_per_class, f1_macro, f1_weighted
 
+def simulate_train(adata_train, adata_test, device, epochs=80,
+                   batch_size=16, lr=1e-4, hidden_dim=1024, droupout_p=0.1,
+                   eval_last_only=False):
+    adata_temp = adata_train.copy()
+    X_tensor, y_tensor, num_classes = prepare_train_tensors(adata_temp, device)
+    X_test_tensor, y_test_tensor, num_classes_test = prepare_train_tensors(adata_test, device)
+    y_test_labels = adata_test.obs["y"].astype("category").cat.codes.values
+    model, probs, losses, test_metrics = do_train(X_tensor, y_tensor, num_classes,
+                                                  X_test_tensor, y_test_labels,
+                                                  device, hidden_dim=hidden_dim, epochs=epochs,
+                                                  batch_size=batch_size, lr=lr, droupout_p=droupout_p,
+                                                  do_print=True, eval_last_only=eval_last_only)
+
+    return model, probs, losses, test_metrics
+
 def do_train(X_tensor, y_tensor, num_classes,
              X_test_tensor, y_test_labels, device,
              hidden_dim=1024, epochs=100, batch_size=16,
@@ -127,7 +162,7 @@ def do_train(X_tensor, y_tensor, num_classes,
     input_dim = X_tensor.shape[1]
     
     if not model:
-        model = ComplexNet2(input_dim, hidden_dim, num_classes, droupout_p=droupout_p).to(device)
+        model = ComplexNet3(input_dim, hidden_dim, num_classes, droupout_p=droupout_p).to(device)
 
     # optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=lr/10)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=lr/10)
@@ -159,18 +194,3 @@ def do_train(X_tensor, y_tensor, num_classes,
         probs = torch.softmax(model(X_tensor), dim=1)
     
     return model, probs, np.array(losses), test_metrics
-
-def simulate_train(adata_train, adata_test, device, epochs=80,
-                   batch_size=16, lr=1e-4, hidden_dim=1024, droupout_p=0.1,
-                   eval_last_only=False):
-    adata_temp = adata_train.copy()
-    X_tensor, y_tensor, num_classes = prepare_train_tensors(adata_temp, device)
-    X_test_tensor, y_test_tensor, num_classes_test = prepare_train_tensors(adata_test, device)
-    y_test_labels = adata_test.obs["y"].astype("category").cat.codes.values
-    model, probs, losses, test_metrics = do_train(X_tensor, y_tensor, num_classes,
-                                                  X_test_tensor, y_test_labels,
-                                                  device, hidden_dim=hidden_dim, epochs=epochs,
-                                                  batch_size=batch_size, lr=lr, droupout_p=droupout_p,
-                                                  do_print=True, eval_last_only=eval_last_only)
-
-    return model, probs, losses, test_metrics

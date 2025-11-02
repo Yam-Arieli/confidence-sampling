@@ -97,77 +97,6 @@ adata_test = cs_utils.add_target_y_to_test(adata_train, adata_test, label_column
 sample_size = int(n_obs * actual_train_params['sample_frac'])
 specific_settings = {}
 
-from confidence_sampling.simulate_train import *
-
-class ComplexNet3(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, droupout_p=0.1):
-        super().__init__()
-        self.fc1 = nn.Linear(input_dim, 64)
-        self.ln1 = nn.LayerNorm(64)
-
-        self.fc2 = nn.Linear(64, 32)
-        self.ln2 = nn.LayerNorm(32)
-
-        self.dropout = nn.Dropout(droupout_p)
-        self.fc_out = nn.Linear(32, output_dim)
-
-    def forward(self, x):
-        x = F.relu(self.ln1(self.fc1(x)))
-        x = self.dropout(x)
-
-        x = F.relu(self.ln2(self.fc2(x)))
-        x = self.dropout(x)
-
-        return self.fc_out(x)
-
-
-def do_train(X_tensor, y_tensor, num_classes,
-             X_test_tensor, y_test_labels, device,
-             hidden_dim=1024, epochs=100, batch_size=16, lr=1e-4, droupout_p=0.1, model=None, do_print=False):
-    input_dim = X_tensor.shape[1]
-    
-    if not model:
-        model = ComplexNet3(input_dim, hidden_dim, num_classes, droupout_p=droupout_p).to(device)
-
-    # optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=lr/10)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=lr/10)
-    criterion = nn.CrossEntropyLoss()
-
-    losses = []
-    test_metrics = []
-    
-    for epoch in range(epochs):
-        epoch_losses = train_one_epoch(model, optimizer, criterion, X_tensor, y_tensor, batch_size)
-
-        # Predict probabilities for adata_test
-        with torch.no_grad():
-            test_probs = torch.softmax(model(X_test_tensor), dim=1)
-        
-        acc_test, recall_test, f1_per_class, f1_macro, f1_weighted = eval_result(test_probs, y_test_labels, do_print=False)
-        test_metrics.append([acc_test, recall_test, f1_per_class, f1_macro, f1_weighted])
-        
-        if do_print and ((epoch+1) % 10 == 0 or epoch == 0):
-            print(f"Epoch {epoch+1}/{epochs}, Loss: {np.mean(epoch_losses):.4f}")
-        
-        losses.append(epoch_losses)
-
-    # Get probabilities
-    with torch.no_grad():
-        probs = torch.softmax(model(X_tensor), dim=1)
-    
-    return model, probs, np.array(losses), test_metrics
-
-def simulate_train(adata_train, adata_test, device, epochs=80, batch_size=16, lr=1e-4, hidden_dim=1024, droupout_p=0.1):
-    adata_temp = adata_train.copy()
-    X_tensor, y_tensor, num_classes = prepare_train_tensors(adata_temp, device)
-    X_test_tensor, y_test_tensor, num_classes_test = prepare_train_tensors(adata_test, device)
-    y_test_labels = adata_test.obs["y"].astype("category").cat.codes.values
-    model, probs, losses, test_metrics = do_train(X_tensor, y_tensor, num_classes,
-                                                  X_test_tensor, y_test_labels,
-                                                  device, hidden_dim=hidden_dim, epochs=epochs,
-                                                  batch_size=batch_size, lr=lr, droupout_p=droupout_p, do_print=True)
-
-    return model, probs, losses, test_metrics
 """
 # Bootstrap differnt methods
 test_metrics_lrdy_all_03 = []
@@ -193,7 +122,7 @@ for iteration in range(actual_train_params['iterations']):
     print(f'iteration: {iteration}')
     sample_indeces = sampler.stratified_weighted_sample(y, confidence, M=sample_size, sample_func=sampler.sample_by_conf, power=power)
     adata_lrdy_sample = adata_train[sample_indeces, :].copy()
-    model, probs, losses, test_metrics_lrdy = simulate_train(
+    model, probs, losses, test_metrics_lrdy = simulate_train.simulate_train(
                                             adata_lrdy_sample, adata_test, device, epochs=actual_train_params['epochs'],
                                             lr=actual_train_params['lr'], batch_size=actual_train_params['batch_size'], hidden_dim=actual_train_params['hidden_dim'])
     accuracies = [epoch_results[0] for epoch_results in test_metrics_lrdy]
@@ -210,7 +139,7 @@ for iteration in range(actual_train_params['iterations']):
     print(f'iteration: {iteration}')
     sample_indeces = sampler.stratified_weighted_sample(y, confidence, M=sample_size, sample_func=sampler.sample_by_conf, power=power)
     adata_lrdy_sample = adata_train[sample_indeces, :].copy()
-    model, probs, losses, test_metrics_lrdy = simulate_train(
+    model, probs, losses, test_metrics_lrdy = simulate_train.simulate_train(
                                             adata_lrdy_sample, adata_test, device, epochs=actual_train_params['epochs'],
                                             lr=actual_train_params['lr'], batch_size=actual_train_params['batch_size'], hidden_dim=actual_train_params['hidden_dim'])
     accuracies = [epoch_results[0] for epoch_results in test_metrics_lrdy]
@@ -227,7 +156,7 @@ for iteration in range(actual_train_params['iterations']):
     print(f'iteration: {iteration}')
     sample_indeces = sampler.stratified_random_sample(y, sample_size)
     adata_rand_sample = adata_train[sample_indeces, :].copy()
-    model, probs, losses, test_metrics_rand = simulate_train(
+    model, probs, losses, test_metrics_rand = simulate_train.simulate_train(
                                             adata_rand_sample, adata_test, device, epochs=actual_train_params['epochs'],
                                             lr=actual_train_params['lr'], batch_size=actual_train_params['batch_size'], hidden_dim=actual_train_params['hidden_dim'])
     accuracies = [epoch_results[0] for epoch_results in test_metrics_rand]
@@ -243,7 +172,7 @@ test_metrics_full_all = []
 
 for iteration in range(iterations_full):
     print(f'iteration: {iteration}')
-    model, probs, losses, test_metrics_full = simulate_train(
+    model, probs, losses, test_metrics_full = simulate_train.simulate_train(
                                             adata_train, adata_test, device, epochs=actual_train_params['epochs'],
                                             lr=actual_train_params['lr'], batch_size=actual_train_params['batch_size'], hidden_dim=actual_train_params['hidden_dim'])
     accuracies = [epoch_results[0] for epoch_results in test_metrics_full]
