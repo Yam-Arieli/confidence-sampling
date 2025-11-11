@@ -292,7 +292,7 @@ def pretrain_and_get_signals(
     """
     model = model.to(device)
     X = torch.tensor(X).to(device)
-    y = torch.tensor(y).to(device)
+    y = torch.tensor(y, dtype=torch.long).to(device)
 
     n_samples = X.shape[0]
     n_classes = int(y.max().item() + 1)

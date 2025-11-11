@@ -1,0 +1,10 @@
+{"train_file": "/Individual Single-Cell RNA-seq PBMC Data from Arunachalam/female_healthy.h5ad",
+ "test_file": "/Individual Single-Cell RNA-seq PBMC Data from Arunachalam/male_severe.h5ad",
+ "results_file": "results_last_1", "label_column": "cell_type",
+ "mislabeled": 0.0, "gene_noise": 0.0,
+ "pre_train_params": {"batch_size": 256, "lr": 0.005, "epochs": 14},
+ "iterations_full": 5, "actual_train_params": {"iterations": 20, "epochs": 150, "lr": 0.0005, "batch_size": 32, "sample_frac": 0.2, "hidden_dim": 128}}
+
+ sbatch \
+ /cs/labs/mornitzan/yam.arieli/confident_sampling_experiment/run_experiment_eval_last.slurm \
+ /cs/labs/mornitzan/yam.arieli/confident_sampling_experiment/configs/config_last_1.json
