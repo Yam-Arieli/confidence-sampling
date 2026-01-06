@@ -346,8 +346,6 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device):
     avg_loss = total_loss / len(dataloader.dataset)
     return avg_loss
 
-
-
 def pretrain_and_probs_matrix(
     model,
     X,
