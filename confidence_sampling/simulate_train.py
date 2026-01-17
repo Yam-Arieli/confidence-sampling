@@ -62,12 +62,15 @@ def eval_result(test_probs, y_test_labels, do_print=False):
     return acc, recall, f1_per_class, f1_macro, f1_weighted
 
 class ComplexNet(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, layers_num=3, droupout_p=0.1):
+    def __init__(self, input_dim, hidden_dim, min_hidden_dim, output_dim, layers_num=3, dropout_p=0.1):
         super().__init__()
         layers_fc = []
         layers_ln = []
         
         # Track dimensions as we build layers
+        min_hidden_dim = max(min_hidden_dim, output_dim)
+        hidden_dim = max(min_hidden_dim, hidden_dim)
+
         for layer in range(layers_num):
             fc = nn.Linear(input_dim, hidden_dim)
             ln = nn.LayerNorm(hidden_dim)
@@ -78,11 +81,11 @@ class ComplexNet(nn.Module):
             # Update input_dim to be the output of the current layer
             input_dim = hidden_dim
             # Prepare hidden_dim for the NEXT layer (if it exists)
-            hidden_dim = max(output_dim, int(hidden_dim / 2))
+            hidden_dim = max(min_hidden_dim, int(hidden_dim / 2))
 
         self.layers_fc = nn.ModuleList(layers_fc)
         self.layers_ln = nn.ModuleList(layers_ln)
-        self.dropout = nn.Dropout(droupout_p)
+        self.dropout = nn.Dropout(dropout_p)
         
         # BUG FIX: Use 'input_dim' (output of the last loop layer) instead of 'hidden_dim'
         self.fc_out = nn.Linear(input_dim, output_dim)
@@ -95,37 +98,19 @@ class ComplexNet(nn.Module):
 
         return self.fc_out(x)
 
-def simulate_train(adata_train, adata_test, device, epochs=80,
-                   batch_size=16, lr=1e-4, hidden_dim=1024, droupout_p=0.1,
-                   eval_last_only=False, scheduler=None, ran_name='lrdy_04',
-                   dropout_p=0.1):
-    adata_temp = adata_train.copy()
-    X_tensor, y_tensor, num_classes = prepare_train_tensors(adata_temp, device)
-    X_test_tensor, y_test_tensor, num_classes_test = prepare_train_tensors(adata_test, device)
-    y_test_labels = adata_test.obs["y"].astype("category").cat.codes.values
-    
-    model, probs, losses, test_metrics = do_train(X_tensor, y_tensor, num_classes,
-                                                  X_test_tensor, y_test_labels,
-                                                  device, hidden_dim=hidden_dim, epochs=epochs,
-                                                  batch_size=batch_size, lr=lr, droupout_p=droupout_p,
-                                                  do_print=True, eval_last_only=eval_last_only,
-                                                  scheduler=scheduler, ran_name=ran_name, dropout_p=droupout_p)
-
-    return model, probs, losses, test_metrics
-
 def do_train(X_tensor, y_tensor, num_classes,
              X_test_tensor, y_test_labels, device,
-             hidden_dim=1024, epochs=100, batch_size=16,
-             lr=1e-4, droupout_p=0.1, model=None, do_print=False,
-             eval_last_only=False, scheduler=None, ran_name='lrdy_04',
-             dropout_p=0.1):
+             epochs=100, batch_size=16, lr=1e-4, scheduler=None, # Train params
+             layers_num=3, hidden_dim=1024, dropout_p=0.1, # Model params
+             model=None, do_print=False, ran_name='missing_name'):
              
     input_dim = X_tensor.shape[1]
    
     if not model:
-        model = ComplexNet(input_dim, hidden_dim, num_classes, layers_num=6, droupout_p=droupout_p).to(device)
+        model = ComplexNet(input_dim, hidden_dim, num_classes, layers_num=layers_num, dropout_p=dropout_p).to(device)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=lr/10)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=lr/10)
+    optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
     if scheduler is not None:
         scheduler = scheduler(optimizer)
@@ -170,6 +155,25 @@ def do_train(X_tensor, y_tensor, num_classes,
         probs = torch.softmax(model(X_tensor), dim=1)
    
     return model, probs, np.array(losses), test_metrics
+
+def simulate_train(adata_train, adata_test, device,
+                   epochs=100, batch_size=16, lr=1e-4, scheduler=None, # Train params
+                   layers_num=3, hidden_dim=1024, dropout_p=0.1, # Model params
+                   ran_name='missing_name', model=None, do_print=True):
+    adata_temp = adata_train.copy()
+    X_tensor, y_tensor, num_classes = prepare_train_tensors(adata_temp, device)
+    X_test_tensor, y_test_tensor, num_classes_test = prepare_train_tensors(adata_test, device)
+    y_test_labels = adata_test.obs["y"].astype("category").cat.codes.values
+    
+    model, probs, losses, test_metrics = do_train(X_tensor, y_tensor, num_classes,
+                                                  X_test_tensor, y_test_labels,
+                                                  device, hidden_dim=hidden_dim, epochs=epochs,
+                                                  batch_size=batch_size, lr=lr, dropout_p=dropout_p,
+                                                  do_print=do_print, layers_num=layers_num, model=None,
+                                                  scheduler=scheduler, ran_name=ran_name)
+
+    return model, probs, losses, test_metrics
+
 def run_sampling_experiment(
     sampler_func,
     sample_args,
@@ -198,13 +202,16 @@ def run_sampling_experiment(
             adata_sample,
             adata_test,
             device,
+            # Train params
             epochs=actual_train_params["epochs"],
-            lr=actual_train_params["lr"],
             batch_size=actual_train_params["batch_size"],
-            hidden_dim=actual_train_params["hidden_dim"],
+            lr=actual_train_params["lr"],
             scheduler=scheduler,
-            ran_name=ran_name,
-            dropout_p=dropout_p
+            # Model params
+            layers_num=actual_train_params["layers_num"],
+            hidden_dim=actual_train_params["hidden_dim"],
+            dropout_p=dropout_p,
+            ran_name=ran_name
         )
 
         accuracies = [epoch_results[0] for epoch_results in test_metrics]
