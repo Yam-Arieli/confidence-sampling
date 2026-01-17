@@ -101,13 +101,13 @@ class ComplexNet(nn.Module):
 def do_train(X_tensor, y_tensor, num_classes,
              X_test_tensor, y_test_labels, device,
              epochs=100, batch_size=16, lr=1e-4, scheduler=None, # Train params
-             layers_num=3, hidden_dim=1024, dropout_p=0.1, # Model params
+             layers_num=3, hidden_dim=1024, min_hidden_dim=128, dropout_p=0.1, # Model params
              model=None, do_print=False, ran_name='missing_name'):
              
     input_dim = X_tensor.shape[1]
    
     if not model:
-        model = ComplexNet(input_dim, hidden_dim, num_classes, layers_num=layers_num, dropout_p=dropout_p).to(device)
+        model = ComplexNet(input_dim, hidden_dim, min_hidden_dim, num_classes, layers_num=layers_num, dropout_p=dropout_p).to(device)
 
     # optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=lr/10)
     optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
@@ -158,7 +158,7 @@ def do_train(X_tensor, y_tensor, num_classes,
 
 def simulate_train(adata_train, adata_test, device,
                    epochs=100, batch_size=16, lr=1e-4, scheduler=None, # Train params
-                   layers_num=3, hidden_dim=1024, dropout_p=0.1, # Model params
+                   layers_num=3, hidden_dim=1024, min_hidden_dim=128, dropout_p=0.1, # Model params
                    ran_name='missing_name', model=None, do_print=True):
     adata_temp = adata_train.copy()
     X_tensor, y_tensor, num_classes = prepare_train_tensors(adata_temp, device)
@@ -167,7 +167,7 @@ def simulate_train(adata_train, adata_test, device,
     
     model, probs, losses, test_metrics = do_train(X_tensor, y_tensor, num_classes,
                                                   X_test_tensor, y_test_labels,
-                                                  device, hidden_dim=hidden_dim, epochs=epochs,
+                                                  device, hidden_dim=hidden_dim, min_hidden_dim=min_hidden_dim, epochs=epochs,
                                                   batch_size=batch_size, lr=lr, dropout_p=dropout_p,
                                                   do_print=do_print, layers_num=layers_num, model=None,
                                                   scheduler=scheduler, ran_name=ran_name)
@@ -210,6 +210,7 @@ def run_sampling_experiment(
             # Model params
             layers_num=actual_train_params["layers_num"],
             hidden_dim=actual_train_params["hidden_dim"],
+            min_hidden_dim=actual_train_params.get("min_hidden_dim", 128),
             dropout_p=dropout_p,
             ran_name=ran_name
         )
