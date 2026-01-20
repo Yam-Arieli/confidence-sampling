@@ -51,30 +51,49 @@ def create_stratified_batches(y, batch_size, min_per_class=3):
                 
     return [np.array(b) for b in batches]
 
-def cull_arena(arena_indices, new_indices, history_sum, history_count, target_size, power=0.4):
+def cull_arena(arena_indices, new_indices, history_sum, history_count, target_size, power=0.4, strategy='confidence'):
     if len(arena_indices) <= target_size:
         return arena_indices
 
-    current_conf = history_sum[arena_indices] / (history_count[arena_indices] + 1e-8)
-    current_conf = current_conf.cpu().numpy()
-    
+    # 1. Identify "Immune" Recruits vs "Judgable" Veterans
     is_rookie = np.isin(arena_indices, new_indices)
     rookie_indices = arena_indices[is_rookie]
     
     veteran_mask = ~is_rookie
     veteran_indices = arena_indices[veteran_mask]
-    veteran_conf = current_conf[veteran_mask]
-    print(f'veteran_conf avg: ', veteran_conf.mean())
     
+    # 2. Determine Budget
     n_rookies = len(rookie_indices)
     n_slots_for_vets = max(0, target_size - n_rookies)
-
+    
+    # 3. Select Survivors
     if n_slots_for_vets > 0 and len(veteran_indices) > 0:
-        survivor_local_idxs = sampler.sample_by_conf(veteran_conf, n_slots_for_vets, power=power)
-        survivor_vets = veteran_indices[survivor_local_idxs]
+        
+        # --- STRATEGY SWITCH ---
+        if strategy == 'random':
+            # Random Baseline: Pick vets purely at random
+            # replace=False ensures we pick distinct indices
+            if len(veteran_indices) > n_slots_for_vets:
+                survivor_vets = np.random.choice(veteran_indices, size=n_slots_for_vets, replace=False)
+            else:
+                survivor_vets = veteran_indices # Keep all if we have space
+                
+        else: # Default: 'confidence'
+            # Calculate confidence only if needed
+            current_conf = history_sum[arena_indices] / (history_count[arena_indices] + 1e-8)
+            current_conf = current_conf.cpu().numpy()
+            veteran_conf = current_conf[veteran_mask]
+            
+            survivor_local_idxs = sampler.sample_by_conf(
+                veteran_conf, n_slots_for_vets, power=power
+            )
+            survivor_vets = veteran_indices[survivor_local_idxs]
+        # -----------------------
+
     else:
         survivor_vets = np.array([], dtype=int)
         
+    # 4. Merge Survivors
     new_arena = np.concatenate([rookie_indices, survivor_vets])
     return np.unique(new_arena.astype(int))
 
@@ -171,7 +190,8 @@ def train_arena_step(model, optimizer, criterion, X, y, arena_indices, sub_epoch
 # ==============================================================================
 # HELPER 4: Evaluation & Logging
 # ==============================================================================
-def evaluate_and_log(run, model, X_test_tensor, y_test_labels, start_time, cycle, batch_i, total_batches, arena_size, ratio_N_to_M):
+def evaluate_and_log(run, model, X_test_tensor, y_test_labels,
+                     start_time, cycle, batch_i, total_batches, arena_size, ratio_N_to_M):
     """
     Runs evaluation on test set and logs metrics to WandB with scaled x-axis.
     """
@@ -209,7 +229,8 @@ def run_evolutionary_experiment(
     cycles=5,
     sub_epochs=3,
     ran_name='evolutionary_stream',
-    reset_history=False
+    reset_history=False,
+    cull_strategy='confidence'
 ):
     X, y, y_np, X_test_tensor, y_test_labels, n_genes, n_classes = prepare_data_for_evolution(
         adata_train, adata_test, device
@@ -270,7 +291,8 @@ def run_evolutionary_experiment(
                     arena_indices, new_indices, 
                     history_sum, history_count, 
                     target_size=coreset_size, 
-                    power=actual_train_params.get('lrdy_power', 0.4)
+                    power=actual_train_params.get('lrdy_power', 0.4),
+                    strategy=cull_strategy
                 )
                 
                 # EVALUATE
