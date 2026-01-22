@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader, WeightedRandomSampler
 import numpy as np
 
+# Models
 class BaseNet(nn.Module):
     """
     This class is copied from Annotatability.models, and can be
@@ -73,6 +74,106 @@ class LoRANet(nn.Module):
             x = F.relu(layer(x))
         x = self.layers[-1](x)
         return F.log_softmax(x, dim=1)
+
+class Sparsemax(nn.Module):
+    """
+    Sparsemax activation function.
+    Pytorch implementation of: https://arxiv.org/abs/1602.02068
+    """
+    def __init__(self, dim=-1):
+        super(Sparsemax, self).__init__()
+        self.dim = dim
+
+    def forward(self, input):
+        # Translate input by max for numerical stability
+        input = input - input.max(dim=self.dim, keepdim=True)[0].expand_as(input)
+        
+        # Sort input in descending order
+        zs = input.sort(dim=self.dim, descending=True)[0]
+        range_values = torch.arange(start=1, end=zs.size(self.dim) + 1, device=input.device).float()
+        range_values = range_values.view(1, -1) if self.dim == 1 else range_values
+
+        # Determine threshold indices
+        bound = 1 + range_values * zs
+        cumsum_zs = torch.cumsum(zs, dim=self.dim)
+        is_gt = bound > cumsum_zs
+        k = is_gt.sum(dim=self.dim, keepdim=True).float()
+
+        # Compute threshold (tau)
+        taus = (cumsum_zs.gather(self.dim, (k - 1).long()) - 1) / k
+        taus = taus.expand_as(input)
+
+        # Sparsemax output
+        return torch.max(torch.zeros_like(input), input - taus)
+
+class GOLDSelectNet(nn.Module):
+    """
+    Neural Network with a Sparse Latent Bottleneck for Pattern Discovery.
+    
+    Structure:
+    Input -> [Hidden Layers (ReLU)] -> [Pattern Layer (Sparsemax)] -> [Classifier] -> Output
+    """
+    def __init__(self, layer_sizes, pattern_dim=64):
+        """
+        Args:
+            layer_sizes (list of int): Sizes of the backbone layers. 
+                                       e.g., [input_dim, hidden1, hidden2, output_dim]
+                                       The 'output_dim' is treated as the number of classes.
+            pattern_dim (int): The size of the latent pattern layer (Z). Default is 64.
+        """
+        super(GOLDSelectNet, self).__init__()
+        
+        # 1. Build the Backbone (Encoder)
+        # We take everything from layer_sizes except the last element (the class output)
+        input_dim = layer_sizes[0]
+        hidden_dims = layer_sizes[1:-1]
+        num_classes = layer_sizes[-1]
+        
+        encoder_layers = []
+        current_dim = input_dim
+        
+        for h_dim in hidden_dims:
+            encoder_layers.append(nn.Linear(current_dim, h_dim))
+            encoder_layers.append(nn.ReLU())
+            current_dim = h_dim
+            
+        self.encoder = nn.Sequential(*encoder_layers)
+
+        # 2. Build the Latent Pattern Layer (The "GOLD" Layer)
+        # Maps the last hidden state to the Pattern Space (Z)
+        # Structure: Linear -> BatchNorm -> Sparsemax
+        self.pattern_projection = nn.Linear(current_dim, pattern_dim)
+        self.pattern_bn = nn.BatchNorm1d(pattern_dim)
+        self.sparsemax = Sparsemax(dim=1)
+        
+        # 3. Build the Classifier (Decoder)
+        # Maps the Sparse Patterns (Z) to the Class Probabilities
+        self.classifier = nn.Linear(pattern_dim, num_classes)
+
+    def forward(self, x):
+        """
+        Args:
+            x (torch.Tensor): Input data.
+
+        Returns:
+            tuple: (log_probs, z)
+                - log_probs: Log-Softmax probabilities for training (loss).
+                - z: The sparse latent pattern vector for analysis.
+        """
+        # Encode
+        features = self.encoder(x)
+        
+        # Project to Latent Pattern Space
+        z_logits = self.pattern_projection(features)
+        z_logits = self.pattern_bn(z_logits)
+        z = self.sparsemax(z_logits)  # This is your Z vector (sparse, sum=1)
+        
+        # Classify based on Patterns
+        logits = self.classifier(z)
+        
+        return F.log_softmax(logits, dim=1), z
+
+# Training and Evaluation Functions
 
 def get_dataloader(X, y_onehot, weighted_sampler=False, device=None, batch_size=256):
     """
@@ -336,8 +437,18 @@ def train_one_epoch(model, dataloader, optimizer, criterion, device):
         y = y_onehot_batch.argmax(dim=1).to(device)
 
         optimizer.zero_grad()
-        output = model(X_batch)        # log_softmax output
-        loss = criterion(output, y)    # per-sample loss
+        
+        # Forward pass
+        output = model(X_batch) 
+        
+        # Check if output is a tuple (meaning it's GOLDSelectNet returning probs, z)
+        if isinstance(output, tuple):
+            log_probs, z = output
+        else:
+            # It's BaseNet or LoRANet returning just log_probs
+            log_probs = output
+
+        loss = criterion(log_probs, y)    # per-sample loss
         loss.mean().backward()
         optimizer.step()
 

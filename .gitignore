@@ -209,4 +209,5 @@ __marimo__/
 # My files
 *.ipynb
 notebooks/
+notebooks_analyze/
 examples/
