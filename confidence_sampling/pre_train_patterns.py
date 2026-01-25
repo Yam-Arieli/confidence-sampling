@@ -103,44 +103,81 @@ def calculate_pattern_importance(z_tensor):
             
     return W_c
 
-def select_gold_cells(model, X, y, W_c, device, percentile=0.2):
+def calculate_gold_scores(model, X, y, W_c, device, batch_size=256):
     """
-    Phase 2 & 3: Snapshot and Selection
+    Phase 2: Snapshot & Score Calculation
     
     Args:
         model: Trained GOLDSelectNet
-        X, y: Data and Labels
-        W_c: The Importance Weights from calculate_pattern_importance
-        percentile: Top fraction of cells to keep (e.g., 0.2 for top 20%)
+        X: Data (n_samples, n_features)
+        y: Labels (n_samples,)
+        W_c: Importance Weights (n_patterns, n_classes)
+        device: 'cuda' or 'cpu'
         
     Returns:
-        selected_indices: Indices of the chosen cells in X
-        scores: The calculated GOLD scores for all cells
+        scores: np.array of shape (n_samples,) - The calculated GOLD score for each cell.
     """
     model = model.to(device)
-    X = torch.tensor(X).to(device)
-    y = torch.tensor(y).cpu().numpy() # Keep y on CPU for indexing
     
-    # 1. Get Snapshot (Z matrix for all cells)
-    model.eval()
-    with torch.no_grad():
-        _, z_matrix = model(X)
-        z_matrix = z_matrix.cpu().numpy() # Shape: (n_samples, n_patterns)
+    # 1. Robust Data Handling (Preserve Dtype)
+    if not torch.is_tensor(X):
+        X_tensor = torch.tensor(X).to(device)
+    else:
+        X_tensor = X.to(device)
         
-    n_samples = X.shape[0]
+    # y is needed as numpy for indexing class columns in W_c
+    if torch.is_tensor(y):
+        y_np = y.cpu().numpy()
+    else:
+        y_np = np.array(y)
+
+    # 2. Extract Z Matrix (Snapshot)
+    model.eval()
+    all_z = []
+    
+    # Use DataLoader to prevent OOM on large datasets
+    dataset = TensorDataset(X_tensor)
+    loader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    
+    with torch.no_grad():
+        for (X_batch,) in loader:
+            _, z_batch = model(X_batch) # Get the latent Z
+            all_z.append(z_batch.cpu())
+            
+    z_matrix = torch.cat(all_z, dim=0).numpy() # Shape: (n_samples, n_patterns)
+        
+    # 3. Calculate Scores
+    n_samples = z_matrix.shape[0]
     scores = np.zeros(n_samples)
     
-    # 2. Calculate Scores
     # Score = Dot Product of (Cell's Z) and (Class's Pattern Weights)
     for i in range(n_samples):
-        cell_z = z_matrix[i]       # Vector (n_patterns,)
-        cell_class = y[i]          # Scalar Class ID
-        class_weights = W_c[:, cell_class] # Vector (n_patterns,) - Importance of patterns for this class
+        cell_z = z_matrix[i]                 # Vector (n_patterns,)
+        cell_class = y_np[i]                 # Scalar Class ID
+        class_weights = W_c[:, cell_class]   # Vector (n_patterns,)
         
-        # The GOLD Metric
         scores[i] = np.dot(cell_z, class_weights)
         
-    # 3. Select Top Percentile per Class (Stratified Selection)
+    return scores
+
+def subsample_gold_cells(scores, y, percentile=0.2):
+    """
+    Phase 3: Stratified Selection based on Scores
+    
+    Args:
+        scores: np.array of scores from calculate_gold_scores
+        y: Labels (n_samples,)
+        percentile: Top fraction to keep (e.g. 0.2)
+        
+    Returns:
+        selected_indices: Indices of the chosen cells in the original dataset
+    """
+    # Ensure y is numpy
+    if torch.is_tensor(y):
+        y = y.cpu().numpy()
+    else:
+        y = np.array(y)
+        
     selected_indices = []
     classes = np.unique(y)
     
@@ -149,18 +186,18 @@ def select_gold_cells(model, X, y, W_c, device, percentile=0.2):
         c_indices = np.where(y == c)[0]
         c_scores = scores[c_indices]
         
-        # Determine threshold
+        # Determine number of cells to keep (k)
         k = int(len(c_indices) * percentile)
         if k < 1: k = 1
         
-        # Get indices of top k scores within this class
-        # argsort is ascending, so take from end [-k:]
+        # Select Top K
+        # argsort is ascending, so we take the last k indices ([-k:])
         top_k_local_indices = np.argsort(c_scores)[-k:]
         top_k_global_indices = c_indices[top_k_local_indices]
         
         selected_indices.extend(top_k_global_indices)
         
-    return np.array(selected_indices), scores
+    return np.array(selected_indices)
 
 # --- Usage Example ---
 # 1. Train and Monitor
