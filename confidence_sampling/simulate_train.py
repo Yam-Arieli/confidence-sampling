@@ -6,9 +6,11 @@ from confidence_sampling.utils import prepare_train_tensors
 # NEW IMPORTS
 from confidence_sampling.core import ComplexNet, eval_result, group_run_generator
 
+
 def train_one_epoch(model, optimizer, criterion, X_tensor, y_tensor, batch_size=16):
     model.train()
     epoch_losses = []
+
     permutation = torch.randperm(X_tensor.size(0))
     num_samples = X_tensor.size(0)
     num_batches = int(np.ceil(num_samples / batch_size))
@@ -37,6 +39,7 @@ def do_train(X_tensor, y_tensor, num_classes,
     if not model:
         # Using ComplexNet from core.py
         model = ComplexNet(input_dim, hidden_dim, min_hidden_dim, num_classes, layers_num=layers_num, dropout_p=dropout_p).to(device)
+        model = model.to(dtype=X_tensor.dtype)
 
     optimizer = torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
 
@@ -62,6 +65,9 @@ def do_train(X_tensor, y_tensor, num_classes,
 
         with torch.no_grad():
             test_probs = torch.softmax(model(X_test_tensor), dim=1)
+        
+        test_probs = test_probs.cpu()
+        y_test_labels = y_test_labels.cpu()
 
         end_time = datetime.now()
         cumulative_time += (end_time - start_time).total_seconds()
