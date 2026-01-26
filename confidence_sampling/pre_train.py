@@ -75,36 +75,6 @@ class LoRANet(nn.Module):
         x = self.layers[-1](x)
         return F.log_softmax(x, dim=1)
 
-class Sparsemax(nn.Module):
-    """
-    Sparsemax activation function.
-    Pytorch implementation of: https://arxiv.org/abs/1602.02068
-    """
-    def __init__(self, dim=-1):
-        super(Sparsemax, self).__init__()
-        self.dim = dim
-
-    def forward(self, input):
-        # Translate input by max for numerical stability
-        input = input - input.max(dim=self.dim, keepdim=True)[0].expand_as(input)
-        
-        # Sort input in descending order
-        zs = input.sort(dim=self.dim, descending=True)[0]
-        range_values = torch.arange(start=1, end=zs.size(self.dim) + 1, device=input.device).float()
-        range_values = range_values.view(1, -1) if self.dim == 1 else range_values
-
-        # Determine threshold indices
-        bound = 1 + range_values * zs
-        cumsum_zs = torch.cumsum(zs, dim=self.dim)
-        is_gt = bound > cumsum_zs
-        k = is_gt.sum(dim=self.dim, keepdim=True).float()
-
-        # Compute threshold (tau)
-        taus = (cumsum_zs.gather(self.dim, (k - 1).long()) - 1) / k
-        taus = taus.expand_as(input)
-
-        # Sparsemax output
-        return torch.max(torch.zeros_like(input), input - taus)
 
 class GOLDSelectNet(nn.Module):
     """
