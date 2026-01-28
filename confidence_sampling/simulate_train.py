@@ -28,8 +28,8 @@ def train_one_epoch(model, optimizer, criterion, X_tensor, y_tensor, batch_size=
         epoch_losses.append(loss.item())
     return epoch_losses
 
-def do_train(X_tensor, y_tensor, num_classes,
-             X_test_tensor, y_test_labels, device,
+def do_train(X_tensor: torch.Tensor, y_tensor: torch.Tensor, num_classes: int,
+             X_test_tensor: torch.Tensor, y_test_labels: np.ndarray, device: torch.device,
              epochs=100, batch_size=16, lr=1e-4, scheduler=None,
              layers_num=3, hidden_dim=1024, min_hidden_dim=128, dropout_p=0.1,
              model=None, do_print=False, ran_name='missing_name'):
@@ -67,7 +67,7 @@ def do_train(X_tensor, y_tensor, num_classes,
             test_probs = torch.softmax(model(X_test_tensor), dim=1)
         
         test_probs = test_probs.cpu()
-        y_test_labels = y_test_labels.cpu()
+        # y_test_labels = y_test_labels.cpu()
 
         end_time = datetime.now()
         cumulative_time += (end_time - start_time).total_seconds()
